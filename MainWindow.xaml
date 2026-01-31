@@ -6,10 +6,10 @@
         xmlns:local="clr-namespace:iVillager"
         mc:Ignorable="d"
         Title="iVillager"
-        Height="640"
-        Width="430"
-        MinHeight="600"
+        Height="899"
+        Width="420"
         MinWidth="420"
+        ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         PreviewKeyDown="Window_PreviewKeyDown"
         Background="#0B1320">
@@ -163,6 +163,13 @@
             </Setter>
         </Style>
 
+        <!-- Checkbox -->
+        <Style x:Key="NordicCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
     </Window.Resources>
 
     <Grid Background="{StaticResource Bg}">
@@ -177,134 +184,155 @@
         </Ellipse>
 
         <Border Width="380"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Background="#0B1320"
-                BorderBrush="#18243A"
-                BorderThickness="1"
-                CornerRadius="22"
-                Padding="18">
+        HorizontalAlignment="Center"
+        VerticalAlignment="Top"
+        Margin="0,28,0,0"
+        Background="#0B1320"
+        BorderBrush="#18243A"
+        BorderThickness="1"
+        CornerRadius="22"
+        Padding="18" Height="817">
 
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <!-- Header -->
-                <StackPanel Grid.Row="0" Margin="4,4,4,14">
-                    <TextBlock Text="iVillager" Style="{StaticResource TitleText}"/>
-                    <TextBlock Style="{StaticResource BodyText}" Margin="0,6,0,0"
-                               Text="Minimalny panel sterowania. Ustaw region kolejki, potem Start."/>
-                </StackPanel>
-
-                <!-- Warning -->
-                <Border Grid.Row="1"
-                        CornerRadius="{StaticResource CardRadius}"
-                        Padding="16"
-                        Background="{StaticResource WarnBg}"
-                        BorderBrush="{StaticResource WarnBorder}"
-                        BorderThickness="1"
-                        Margin="0,0,0,14">
-                    <StackPanel>
-                        <TextBlock Foreground="{StaticResource WarnText}" FontSize="14" FontWeight="SemiBold"
-                                   Text="Wymagane: Global Build Queue"/>
-                        <TextBlock Foreground="{StaticResource WarnText}" Margin="0,8,0,0" FontSize="13" LineHeight="18" TextWrapping="Wrap"
-           Text="W opcjach gry wlacz &quot;Globalna Kolejka Budowy / Global Build Queue&quot;. Potem w overlay zaznacz jej obszar na ekranie." />
-
-                    </StackPanel>
-                </Border>
-
-                <!-- Main content: two cards -->
-                <Grid Grid.Row="2">
+            <!-- Scroll gdy okno jest niższe -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+                <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Start/Stop card -->
-                    <Border Grid.Row="0" Style="{StaticResource CardStyle}" Margin="0,0,0,14">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
+                    <!-- Header -->
+                    <StackPanel Grid.Row="0" Margin="4,4,4,14">
+                        <TextBlock Text="iVillager" Style="{StaticResource TitleText}"/>
+                        <TextBlock Style="{StaticResource BodyText}" Margin="0,6,0,0"
+                           Text="Minimalny panel sterowania. Ustaw region kolejki, potem Start."/>
+                    </StackPanel>
 
-                            <TextBlock Grid.Row="0" Text="Sterowanie" Style="{StaticResource SectionTitle}"/>
-                            <TextBlock Grid.Row="1" Style="{StaticResource BodyText}" Margin="0,8,0,14"
-                                       Text="Kliknij Start, gdy region jest zapisany. Stop zatrzymuje wykrywanie."/>
-                            <Button Grid.Row="2"
-                                    x:Name="StartStopButton"
-                                    Content="Start"
-                                    Click="StartStopButton_Click"
-                                    Style="{StaticResource PrimaryButton}"/>
-
-                            <TextBlock x:Name="DetectedIconText"
-                                       Grid.Row="2"
-                                       Text=""
-                                       Foreground="#8DE6DC"
-                                       FontSize="12"
-                                       Margin="0,54,0,0"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Top"
-                                       Visibility="Collapsed"/>
-                        </Grid>
+                    <!-- Warning -->
+                    <Border Grid.Row="1"
+                    CornerRadius="{StaticResource CardRadius}"
+                    Padding="16"
+                    Background="{StaticResource WarnBg}"
+                    BorderBrush="{StaticResource WarnBorder}"
+                    BorderThickness="1"
+                    Margin="0,0,0,14">
+                        <StackPanel>
+                            <TextBlock Foreground="{StaticResource WarnText}" FontSize="14" FontWeight="SemiBold"
+                               Text="Wymagane: Global Build Queue"/>
+                            <TextBlock Foreground="{StaticResource WarnText}" Margin="0,8,0,0" FontSize="13" LineHeight="18" TextWrapping="Wrap"
+                               Text="W opcjach gry włącz „Globalną Kolejkę Budowy / Global Build Queue”. Potem w overlay zaznacz jej obszar na ekranie." />
+                        </StackPanel>
                     </Border>
 
-                    <!-- Overlay + Hotkey card -->
-                    <Border Grid.Row="1" Style="{StaticResource CardStyle}">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
+                    <!-- Main content -->
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="Overlay &amp; skr�t" Style="{StaticResource SectionTitle}"/>
+                        <!-- Start/Stop card -->
+                        <Border Grid.Row="0" Style="{StaticResource CardStyle}" Margin="0,0,0,14">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="1" Style="{StaticResource BodyText}" Margin="0,8,0,12"
-                                       Text="Ctrl + Page Up otwiera overlay. W overlay ten sam skr�t zapisuje region i zamyka overlay."/>
+                                <TextBlock Grid.Row="0" Text="Sterowanie" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Grid.Row="1" Style="{StaticResource BodyText}" Margin="0,8,0,14"
+                                   Text="Kliknij Start, gdy region jest zapisany. Stop zatrzymuje wykrywanie."/>
+                                <Button Grid.Row="2"
+                                x:Name="StartStopButton"
+                                Content="Start"
+                                Click="StartStopButton_Click"
+                                Style="{StaticResource PrimaryButton}"/>
 
-                            <TextBox Grid.Row="2"
-                                     x:Name="HotkeyInput"
-                                     Style="{StaticResource NordicTextBox}"
-                                     ToolTip="np. Ctrl+Shift+F1"
-                                     Margin="0,0,0,12"/>
-
-                            <Grid Grid.Row="3">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-
-                                <Button Grid.Column="0"
-                                        x:Name="RebindHotkeyButton"
-                                        Content="Rebind"
-                                        Click="RebindHotkeyButton_Click"
-                                        Style="{StaticResource SecondaryButton}"
-                                        Margin="0,0,10,0"/>
-
-                                <Button Grid.Column="1"
-                                        Content="Zapisz"
-                                        Click="SaveHotkeyButton_Click"
-                                        Style="{StaticResource SecondaryButton}"/>
+                                <TextBlock x:Name="DetectedIconText"
+                                   Grid.Row="2"
+                                   Text=""
+                                   Foreground="#8DE6DC"
+                                   FontSize="12"
+                                   Margin="0,54,0,0"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Top"
+                                   Visibility="Collapsed"/>
                             </Grid>
-                        </Grid>
-                    </Border>
-                </Grid>
+                        </Border>
 
-                <!-- Footer -->
-                <TextBlock Grid.Row="3"
-                           Style="{StaticResource BodyText}"
-                           Foreground="#7F8EAA"
-                           TextAlignment="Center"
-                           Margin="6,14,6,2"
-                           Text="Je�li co� nie dzia�a: odpal overlay i ponownie zaznacz region kolejki."/>
-            </Grid>
+                        <!-- Overlay + Start/Stop hotkey -->
+                        <Border Grid.Row="1" Style="{StaticResource CardStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="Overlay" Style="{StaticResource SectionTitle}"/>
+
+                                <TextBlock Grid.Row="1" Style="{StaticResource BodyText}" Margin="0,8,0,10"
+                                   Text="Overlay służy tylko do zaznaczenia regionu Global Build Queue. Skrót do overlay jest stały: Ctrl + Page Up." />
+
+                                <CheckBox Grid.Row="2"
+                                  x:Name="OverlayHotkeyToggle"
+                                  Style="{StaticResource NordicCheckBox}"
+                                  Content="Włącz skrót overlay (Ctrl + Page Up)"
+                                  Margin="0,0,0,14"
+                                  Checked="OverlayHotkeyToggle_Changed"
+                                  Unchecked="OverlayHotkeyToggle_Changed"/>
+
+                                <TextBlock Grid.Row="3" Text="Skrót Start/Stop" Style="{StaticResource SectionTitle}"/>
+
+                                <TextBlock Grid.Row="4" Style="{StaticResource BodyText}" Margin="0,8,0,12"
+                                   Text="Ten skrót uruchamia Start/Stop globalnie (działa też, gdy gra ma fokus)." />
+
+                                <TextBox Grid.Row="5"
+                                 x:Name="HotkeyInput"
+                                 Style="{StaticResource NordicTextBox}"
+                                 ToolTip="np. Ctrl+Shift+F1"
+                                 Margin="0,0,0,12"/>
+
+                                <Grid Grid.Row="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Button Grid.Column="0"
+                                    x:Name="RebindHotkeyButton"
+                                    Content="Rebind"
+                                    Click="RebindHotkeyButton_Click"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,10,0"/>
+
+                                    <Button Grid.Column="1"
+                                    Content="Zapisz"
+                                    Click="SaveHotkeyButton_Click"
+                                    Style="{StaticResource SecondaryButton}"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- Footer -->
+                    <TextBlock Grid.Row="3"
+                       Style="{StaticResource BodyText}"
+                       Foreground="#7F8EAA"
+                       TextAlignment="Center"
+                       Margin="6,14,6,2">
+                <Run Text="Jeśli coś nie działa: odpal overlay i ponownie zaznacz region kolejki."/>
+                    </TextBlock>
+                </Grid>
+            </ScrollViewer>
         </Border>
     </Grid>
 </Window>

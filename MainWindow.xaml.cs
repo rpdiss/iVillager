@@ -6,7 +6,6 @@ using System.Windows.Threading;
 using iVillager.Capture;
 using iVillager.Models;
 using iVillager.Overlay;
-using Application = System.Windows.Application;
 using Color = System.Windows.Media.Color;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
@@ -16,20 +15,26 @@ public partial class MainWindow : Window
 {
     private const string GroupId = "v1";
     private const string RegionName = "villager_in_que";
-    private const int QueueGoneConfirmSeconds = 3;
+    private const int QueueGoneConfirmSeconds = 2;
     private const int ReminderFirstSeconds = 15;
     private const int ReminderSecondSeconds = 30;
+
     private bool _isRegionMonitoringRunning;
     private DispatcherTimer? _regionTimer;
+
     private readonly RegionConfigManager _configManager = new("region_config.json");
     private readonly ScreenCaptureService _screenCapture = new();
     private readonly IconDetectionService _iconDetection = new();
     private readonly MediaPlayer _soundPlayer = new();
+
     private AppSettings _appSettings;
     private NamedRegion? _cachedRegion;
+
     private bool _isWaitingForHotkeyRebind;
+
     private GlobalHotkeyHook? _globalHotkeyHook;
     private GlobalHotkeyHook? _regionOverlayHotkeyHook;
+
     private int _reminderElapsedSeconds;
     private int _reminderPhase;
     private bool _isVillagerQueued;
@@ -39,8 +44,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _appSettings = AppSettings.Load();
+
         PreviewKeyDown += Window_PreviewKeyDown;
         Loaded += OnLoaded;
+
         Closed += (_, _) =>
         {
             _globalHotkeyHook?.Dispose();
@@ -53,14 +60,34 @@ public partial class MainWindow : Window
         HotkeyInput.Text = _appSettings.HotkeyStartStop;
         RegisterHotkey(_appSettings.HotkeyStartStop);
 
+        OverlayHotkeyToggle.IsChecked = _appSettings.OverlayHotkeyEnabled;
+        ApplyOverlayHotkeyState(_appSettings.OverlayHotkeyEnabled);
+
+        _iconDetection.LoadTemplates(AppContext.BaseDirectory);
+    }
+
+    private void ApplyOverlayHotkeyState(bool enabled)
+    {
         _regionOverlayHotkeyHook?.Dispose();
+        _regionOverlayHotkeyHook = null;
+
+        if (!enabled)
+            return;
+
         _regionOverlayHotkeyHook = new GlobalHotkeyHook(
             Key.PageUp,
             ModifierKeys.Control,
             () => Dispatcher.Invoke(OpenRegionSelector),
             Dispatcher);
+    }
 
-        _iconDetection.LoadTemplates(AppContext.BaseDirectory);
+    private void OverlayHotkeyToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        var enabled = OverlayHotkeyToggle.IsChecked == true;
+        _appSettings.OverlayHotkeyEnabled = enabled;
+        _appSettings.Save();
+
+        ApplyOverlayHotkeyState(enabled);
     }
 
     private void RegisterHotkey(string? shortcut)
@@ -80,7 +107,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Nie moÅ¼na zarejestrowaÄ‡ skrÃ³tu: {ex.Message}", "SkrÃ³t", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(
+                $"Nie mo¿na zarejestrowaæ skrótu: {ex.Message}",
+                "Skrót klawiszowy",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
     }
 
@@ -104,15 +135,19 @@ public partial class MainWindow : Window
             var modifiers = Keyboard.Modifiers;
             var key = e.Key;
             var shortcut = HotkeyHelper.ToString(key, modifiers);
+
             HotkeyInput.Text = shortcut;
             HotkeyInput.ToolTip = "np. Ctrl+Shift+F1";
             _isWaitingForHotkeyRebind = false;
             RebindHotkeyButton.IsEnabled = true;
+
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.PageUp && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+        if (_appSettings.OverlayHotkeyEnabled
+            && e.Key == Key.PageUp
+            && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
             OpenRegionSelector();
             e.Handled = true;
@@ -140,15 +175,15 @@ public partial class MainWindow : Window
         if (_isRegionMonitoringRunning)
         {
             StartStopButton.Content = "Stop";
-            StartStopButton.Background = new SolidColorBrush(Color.FromRgb(0xb5, 0x2e, 0x2e));
-            StartStopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0xe0, 0x50, 0x50));
+            StartStopButton.Background = new SolidColorBrush(Color.FromRgb(0xB5, 0x2E, 0x2E));
+            StartStopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0x50, 0x50));
             StartRegionMonitoring();
         }
         else
         {
             StartStopButton.Content = "Start";
-            StartStopButton.Background = new SolidColorBrush(Color.FromRgb(0x0d, 0x73, 0x77));
-            StartStopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0x14, 0xa3, 0xa8));
+            StartStopButton.Background = new SolidColorBrush(Color.FromRgb(0x0D, 0x73, 0x77));
+            StartStopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0x14, 0xA3, 0xA8));
             StopRegionMonitoring();
         }
     }
@@ -156,13 +191,13 @@ public partial class MainWindow : Window
     private void StartRegionMonitoring()
     {
         _iconDetection.ResetSessionLock();
+
         DetectedIconText.Visibility = Visibility.Collapsed;
         DetectedIconText.Text = "";
 
         _isVillagerQueued = false;
         _queueMissingSeconds = 0;
 
-        // start sekwencji "pusto" ustawiamy, ale NIE gramy w ciemno
         ResetSoundReminder(silent: true);
 
         _regionTimer = new DispatcherTimer
@@ -172,10 +207,8 @@ public partial class MainWindow : Window
         _regionTimer.Tick += OnRegionTick;
         _regionTimer.Start();
 
-        // od razu zrób pierwszy tick (¿eby nie czekaæ 1s i ¿eby na starcie zagra³o tylko jeœli jest pusto)
         OnRegionTick(null, EventArgs.Empty);
     }
-
 
     private void StopRegionMonitoring()
     {
@@ -197,41 +230,34 @@ public partial class MainWindow : Window
 
             if (detected != null)
             {
-                // Ikona jest — villager w kolejce / produkuje siê
                 _isVillagerQueued = true;
                 _queueMissingSeconds = 0;
 
                 DetectedIconText.Text = $"Wykryta ikona: {detected}";
                 DetectedIconText.Visibility = Visibility.Visible;
 
-                // Resetujemy sekwencjê i cisza
                 _soundPlayer.Stop();
                 ResetSoundReminder(silent: true);
                 return;
             }
 
-            // detected == null
             DetectedIconText.Visibility = Visibility.Collapsed;
             DetectedIconText.Text = "";
 
             if (_isVillagerQueued)
             {
-                // Wczeœniej by³ w kolejce — teraz znikn¹³, potwierdzamy 3s
                 _queueMissingSeconds++;
 
                 if (_queueMissingSeconds < QueueGoneConfirmSeconds)
                     return;
 
-                // Potwierdzone: kolejka pusta
                 _isVillagerQueued = false;
                 _queueMissingSeconds = 0;
 
-                // Start sekwencji od razu: rob_wiesniaka -> 15s ty_rob -> 30s uzyj -> spam co 15
                 ResetSoundReminder(silent: false);
                 return;
             }
 
-            // Normalny tryb: villager nie jest w kolejce, wiêc liczymy reminder
             _reminderElapsedSeconds++;
 
             if (_reminderPhase == -1 && _reminderElapsedSeconds >= ReminderFirstSeconds)
@@ -253,7 +279,6 @@ public partial class MainWindow : Window
         }
         catch
         {
-            // ignore single tick errors
         }
     }
 
@@ -262,6 +287,7 @@ public partial class MainWindow : Window
         var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", fileName);
         if (!File.Exists(path))
             return;
+
         _soundPlayer.Stop();
         _soundPlayer.Open(new Uri(path, UriKind.Absolute));
         _soundPlayer.Play();
@@ -289,8 +315,8 @@ public partial class MainWindow : Window
     private void RebindHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
         _isWaitingForHotkeyRebind = true;
-        HotkeyInput.Text = "NaciÅ›nij kombinacjÄ™...";
-        HotkeyInput.ToolTip = "NaciÅ›nij dowolnÄ… kombinacjÄ™ (Escape = anuluj)";
+        HotkeyInput.Text = "Naciœnij kombinacjê…";
+        HotkeyInput.ToolTip = "Naciœnij dowoln¹ kombinacjê (Escape = anuluj)";
         RebindHotkeyButton.IsEnabled = false;
     }
 
@@ -300,16 +326,28 @@ public partial class MainWindow : Window
             return;
 
         var shortcut = HotkeyInput.Text?.Trim();
-        if (string.IsNullOrEmpty(shortcut) || shortcut == "NaciÅ›nij kombinacjÄ™..."
+
+        if (string.IsNullOrEmpty(shortcut)
+            || shortcut == "Naciœnij kombinacjê…"
             || !HotkeyHelper.TryParse(shortcut, out _, out _))
         {
-            MessageBox.Show("NieprawidÅ‚owy skrÃ³t. Kliknij Rebind i naciÅ›nij kombinacjÄ™ lub wpisz np. Ctrl+Shift+F1", "SkrÃ³t", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(
+                "Nieprawid³owy skrót. Kliknij Rebind i naciœnij kombinacjê lub wpisz np. Ctrl+Shift+F1.",
+                "Skrót klawiszowy",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
             return;
         }
 
         _appSettings.HotkeyStartStop = shortcut!;
         _appSettings.Save();
+
         RegisterHotkey(shortcut);
-        MessageBox.Show("SkrÃ³t zapisany. DziaÅ‚a globalnie (takÅ¼e gdy gra ma fokus).", "SkrÃ³t", MessageBoxButton.OK, MessageBoxImage.Information);
+
+        MessageBox.Show(
+            "Skrót zapisany. Dzia³a globalnie (tak¿e gdy gra ma fokus).",
+            "Skrót klawiszowy",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 }

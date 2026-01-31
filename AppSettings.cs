@@ -16,7 +16,7 @@ public class AppSettings
     };
 
     public string HotkeyStartStop { get; set; } = "Ctrl+Shift+F1";
-
+    public bool OverlayHotkeyEnabled { get; set; } = true;
     public static AppSettings Load()
     {
         if (!File.Exists(SettingsPath))
