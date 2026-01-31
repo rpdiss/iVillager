@@ -6,8 +6,6 @@ using System.Windows.Threading;
 using iVillager.Capture;
 using iVillager.Models;
 using iVillager.Overlay;
-using NHotkey;
-using NHotkey.Wpf;
 using Application = System.Windows.Application;
 using Color = System.Windows.Media.Color;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -30,12 +28,10 @@ public partial class MainWindow : Window
     private AppSettings _appSettings;
     private NamedRegion? _cachedRegion;
     private bool _isWaitingForHotkeyRebind;
-
+    private GlobalHotkeyHook? _globalHotkeyHook;
+    private GlobalHotkeyHook? _regionOverlayHotkeyHook;
     private int _reminderElapsedSeconds;
     private int _reminderPhase;
-    // -1 = zagrano rob_wiesniaka (start)
-    //  0 = czekamy na ty_rob_wiesniaka
-    //  1 = spam uzyj_wieska
     private bool _isVillagerQueued;
     private int _queueMissingSeconds;
 
@@ -45,33 +41,47 @@ public partial class MainWindow : Window
         _appSettings = AppSettings.Load();
         PreviewKeyDown += Window_PreviewKeyDown;
         Loaded += OnLoaded;
+        Closed += (_, _) =>
+        {
+            _globalHotkeyHook?.Dispose();
+            _regionOverlayHotkeyHook?.Dispose();
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         HotkeyInput.Text = _appSettings.HotkeyStartStop;
         RegisterHotkey(_appSettings.HotkeyStartStop);
+
+        _regionOverlayHotkeyHook?.Dispose();
+        _regionOverlayHotkeyHook = new GlobalHotkeyHook(
+            Key.PageUp,
+            ModifierKeys.Control,
+            () => Dispatcher.Invoke(OpenRegionSelector),
+            Dispatcher);
+
         _iconDetection.LoadTemplates(AppContext.BaseDirectory);
     }
 
     private void RegisterHotkey(string? shortcut)
     {
+        _globalHotkeyHook?.Dispose();
+        _globalHotkeyHook = null;
+
         if (!HotkeyHelper.TryParse(shortcut, out var key, out var modifiers))
             return;
 
         try
         {
-            HotkeyManager.Current.AddOrReplace("StartStop", key, modifiers, OnGlobalStartStopHotkey);
+            _globalHotkeyHook = new GlobalHotkeyHook(key, modifiers, () =>
+            {
+                Dispatcher.Invoke(() => StartStopButton_Click(null, null!));
+            }, Dispatcher);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Nie moÅ¼na zarejestrowaÄ‡ skrÃ³tu: {ex.Message}", "SkrÃ³t", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
-
-    private void OnGlobalStartStopHotkey(object? sender, HotkeyEventArgs e)
-    {
-        Dispatcher.Invoke(() => StartStopButton_Click(null, null!));
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -149,12 +159,11 @@ public partial class MainWindow : Window
         DetectedIconText.Visibility = Visibility.Collapsed;
         DetectedIconText.Text = "";
 
-        _reminderElapsedSeconds = 0;
-        _reminderPhase = 0;
         _isVillagerQueued = false;
         _queueMissingSeconds = 0;
 
-        ResetSoundReminder(); // <-- DODAJ TO
+        // start sekwencji "pusto" ustawiamy, ale NIE gramy w ciemno
+        ResetSoundReminder(silent: true);
 
         _regionTimer = new DispatcherTimer
         {
@@ -162,6 +171,9 @@ public partial class MainWindow : Window
         };
         _regionTimer.Tick += OnRegionTick;
         _regionTimer.Start();
+
+        // od razu zrób pierwszy tick (¿eby nie czekaæ 1s i ¿eby na starcie zagra³o tylko jeœli jest pusto)
+        OnRegionTick(null, EventArgs.Empty);
     }
 
 
@@ -185,17 +197,16 @@ public partial class MainWindow : Window
 
             if (detected != null)
             {
-                // Ikona jest â€“ villager w kolejce / produkuje siÄ™
+                // Ikona jest — villager w kolejce / produkuje siê
                 _isVillagerQueued = true;
                 _queueMissingSeconds = 0;
 
                 DetectedIconText.Text = $"Wykryta ikona: {detected}";
                 DetectedIconText.Visibility = Visibility.Visible;
 
-                // Stopujemy wszystkie reminder-y i nie gramy nic
-                _reminderElapsedSeconds = 0;
-                _reminderPhase = 0;
+                // Resetujemy sekwencjê i cisza
                 _soundPlayer.Stop();
+                ResetSoundReminder(silent: true);
                 return;
             }
 
@@ -205,21 +216,22 @@ public partial class MainWindow : Window
 
             if (_isVillagerQueued)
             {
-                // WczeÅ›niej byÅ‚ w kolejce â€“ teraz zniknÄ…Å‚, ale potwierdzamy 3 sekundy
+                // Wczeœniej by³ w kolejce — teraz znikn¹³, potwierdzamy 3s
                 _queueMissingSeconds++;
 
                 if (_queueMissingSeconds < QueueGoneConfirmSeconds)
-                    return; // jeszcze nie odpalamy reminderÃ³w
+                    return;
 
                 // Potwierdzone: kolejka pusta
                 _isVillagerQueued = false;
                 _queueMissingSeconds = 0;
 
-                ResetSoundReminder(); // tu poleci "rob_wiesniaka.mp3" i reset timera
+                // Start sekwencji od razu: rob_wiesniaka -> 15s ty_rob -> 30s uzyj -> spam co 15
+                ResetSoundReminder(silent: false);
                 return;
             }
 
-            // Normalny tryb: villager nie jest w kolejce, wiÄ™c liczymy reminder
+            // Normalny tryb: villager nie jest w kolejce, wiêc liczymy reminder
             _reminderElapsedSeconds++;
 
             if (_reminderPhase == -1 && _reminderElapsedSeconds >= ReminderFirstSeconds)
@@ -255,11 +267,13 @@ public partial class MainWindow : Window
         _soundPlayer.Play();
     }
 
-    private void ResetSoundReminder()
+    private void ResetSoundReminder(bool silent = false)
     {
         _reminderElapsedSeconds = 0;
         _reminderPhase = -1;
-        PlayReminderSound("rob_wiesniaka.mp3");
+
+        if (!silent)
+            PlayReminderSound("rob_wiesniaka.mp3");
     }
 
     private NamedRegion? GetVillagerInQueRegion()

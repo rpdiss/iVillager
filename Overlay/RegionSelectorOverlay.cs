@@ -164,7 +164,7 @@ public class RegionSelectorOverlay : Window
                 const string regionName = "Globalna Kolejka Budowy / Global Build Queue";
                 if (_regions.Any(r => r.Name == regionName))
                 {
-                    MessageBox.Show("Region Globalna Kolejka Budowy juĹĽ istnieje. UsuĹ„ go (Delete), aby dodaÄ‡ nowy.");
+                    MessageBox.Show("Region Globalna Kolejka Budowy ju� istnieje. Usu�� go (Delete), aby doda� nowy.");
                 }
                 else
                 {
@@ -232,7 +232,7 @@ public class RegionSelectorOverlay : Window
 
         _saveButton = new System.Windows.Controls.Button
         {
-            Content = "đź’ľ Zapisz",
+            Content = "Zapisz",
             Width = 80,
             Height = 30,
             FontWeight = FontWeights.Bold,
