@@ -1,11 +1,11 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
-using iVillager;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using iVillager.Capture;
 using iVillager.Models;
 
@@ -28,32 +28,47 @@ public class RegionSelectorOverlay : Window
 
     private readonly List<NamedRegion> _regions = new();
 
-    // âś… JSON zamiast YAML
+    // JSON zamiast YAML
     private readonly RegionConfigManager _configManager = new("region_config.json");
 
-    private System.Windows.Controls.Button? _saveButton;
+    private Button? _saveButton;
+
+    // 🔧 Kluczowa poprawka: ignoruj pierwszy Ctrl+PageUp, który otworzył overlay
+    private bool _ignoreFirstCtrlPageUp = true;
 
     public RegionSelectorOverlay(string groupId = "v1")
     {
         _groupId = groupId;
+
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         Topmost = true;
         Background = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0));
         ShowInTaskbar = false;
         WindowState = WindowState.Maximized;
+
         Focusable = true;
         AllowsTransparency = true;
+
         Left = 0;
         Top = 0;
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
-        Activated += (_, _) => Focus();
+
+        // Upewnij się, że okno łapie fokus
+        Activated += (_, _) =>
+        {
+            Focus();
+            Keyboard.Focus(this);
+        };
+
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
+
         MouseDown += OnMouseDown;
         MouseMove += OnMouseMove;
         MouseUp += OnMouseUp;
+
         KeyDown += OnKeyDown;
 
         var loaded = _configManager.LoadGroup(_groupId);
@@ -64,6 +79,7 @@ public class RegionSelectorOverlay : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
+
         var hwnd = new WindowInteropHelper(this).Handle;
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
@@ -80,9 +96,64 @@ public class RegionSelectorOverlay : Window
         IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
 
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        var canvas = new Canvas();
+        Content = canvas;
+
+        _saveButton = new Button
+        {
+            Content = "Zapisz",
+            Width = 80,
+            Height = 30,
+            FontWeight = FontWeights.Bold,
+            Background = new SolidColorBrush(Color.FromArgb(200, 0, 120, 215)),
+            Foreground = Brushes.White,
+            BorderBrush = Brushes.DarkSlateGray,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand
+        };
+
+        _saveButton.Click += (_, _) =>
+        {
+            _configManager.SaveGroup(_groupId, _regions);
+            MessageBox.Show("Regiony zapisane!");
+        };
+
+        canvas.Children.Add(_saveButton);
+        UpdateSaveButtonPosition();
+
+        // 🔧 Ignorujemy Ctrl+PageUp z tego samego “wciśnięcia”,
+        // które wywołało otwarcie okna. Odblokuj dopiero po chwili.
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _ignoreFirstCtrlPageUp = false;
+        }), DispatcherPriority.Background);
+
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateSaveButtonPosition();
+    }
+
+    private void UpdateSaveButtonPosition()
+    {
+        if (_saveButton != null)
+        {
+            // Canvas nie wspiera SetRight, więc liczmy ręcznie
+            Canvas.SetLeft(_saveButton, Math.Max(0, ActualWidth - _saveButton.Width - 10));
+            Canvas.SetTop(_saveButton, 10);
+        }
+    }
+
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
         Focus();
+        Keyboard.Focus(this);
+
         var pos = e.GetPosition(this);
 
         _selectedRegion = _regions.FindLast(r =>
@@ -104,6 +175,7 @@ public class RegionSelectorOverlay : Window
 
             CaptureMouse();
             InvalidateVisual();
+            e.Handled = true;
             return;
         }
 
@@ -112,8 +184,10 @@ public class RegionSelectorOverlay : Window
         _selectedRegion = null;
         _isDraggingRegion = false;
         _isResizing = false;
+
         CaptureMouse();
         InvalidateVisual();
+        e.Handled = true;
     }
 
     private void OnMouseMove(object sender, MouseEventArgs e)
@@ -124,16 +198,20 @@ public class RegionSelectorOverlay : Window
         {
             var offset = pos - _dragStart.Value;
             var r = _originalRect.Value;
+
             _selectedRegion.Value.Bounds.X = r.X + offset.X;
             _selectedRegion.Value.Bounds.Y = r.Y + offset.Y;
+
             InvalidateVisual();
         }
         else if (_isResizing && _selectedRegion != null && _dragStart != null && _originalRect != null)
         {
             var offset = pos - _dragStart.Value;
             var r = _originalRect.Value;
+
             _selectedRegion.Value.Bounds.Width = Math.Max(10, r.Width + offset.X);
             _selectedRegion.Value.Bounds.Height = Math.Max(10, r.Height + offset.Y);
+
             InvalidateVisual();
         }
         else if (_startPoint != null && e.LeftButton == MouseButtonState.Pressed)
@@ -153,22 +231,26 @@ public class RegionSelectorOverlay : Window
             _isResizing = false;
             _dragStart = null;
             _originalRect = null;
+            e.Handled = true;
             return;
         }
 
         if (_startPoint != null && _previewRect != null)
         {
             var rect = _previewRect.Value;
+
             if (rect.Width > 5 && rect.Height > 5)
             {
                 const string regionName = "Globalna Kolejka Budowy / Global Build Queue";
+
                 if (_regions.Any(r => r.Name == regionName))
                 {
-                    MessageBox.Show("Region Globalna Kolejka Budowy ju� istnieje. Usu�� go (Delete), aby doda� nowy.");
+                    MessageBox.Show("Region \"Globalna Kolejka Budowy\" już istnieje. Usuń go (Delete), aby dodać nowy.");
                 }
                 else
                 {
-                    Color color = PickColorDialog(this) ?? Color.FromArgb(120, 0, 255, 0);
+                    var color = PickColorDialog(this) ?? Color.FromArgb(120, 0, 255, 0);
+
                     _regions.Add(new NamedRegion
                     {
                         Name = regionName,
@@ -192,7 +274,9 @@ public class RegionSelectorOverlay : Window
         _previewRect = null;
         _previewName = null;
         _previewColor = null;
+
         InvalidateVisual();
+        e.Handled = true;
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
@@ -202,20 +286,38 @@ public class RegionSelectorOverlay : Window
             _regions.Remove(_selectedRegion);
             _selectedRegion = null;
             InvalidateVisual();
+            e.Handled = true;
+            return;
         }
-        else if (e.Key == Key.S)
+
+        if (e.Key == Key.S)
         {
             _configManager.SaveGroup(_groupId, _regions);
             MessageBox.Show("Regiony zapisane!");
+            e.Handled = true;
+            return;
         }
-        else if (e.Key == Key.Escape)
+
+        if (e.Key == Key.Escape)
         {
             Close();
+            e.Handled = true;
+            return;
         }
-        else if (e.Key == Key.PageUp && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+
+        // Ctrl+PageUp: save + close (ALE nie ten pierwszy, który otworzył overlay)
+        if (e.Key == Key.PageUp && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
+            if (_ignoreFirstCtrlPageUp)
+            {
+                e.Handled = true;
+                return;
+            }
+
             _configManager.SaveGroup(_groupId, _regions);
             Close();
+            e.Handled = true;
+            return;
         }
     }
 
@@ -223,52 +325,6 @@ public class RegionSelectorOverlay : Window
     {
         base.OnRender(dc);
         RegionOverlayRenderer.RenderRegions(dc, _regions, _previewRect, _previewName, _previewColor, _selectedRegion);
-    }
-
-    private void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        var canvas = new System.Windows.Controls.Canvas();
-        Content = canvas;
-
-        _saveButton = new System.Windows.Controls.Button
-        {
-            Content = "Zapisz",
-            Width = 80,
-            Height = 30,
-            FontWeight = FontWeights.Bold,
-            Background = new SolidColorBrush(Color.FromArgb(200, 0, 120, 215)),
-            Foreground = Brushes.White,
-            BorderBrush = Brushes.DarkSlateGray,
-            BorderThickness = new Thickness(1)
-        };
-
-        _saveButton.Click += (_, _) =>
-        {
-            _configManager.SaveGroup(_groupId, _regions);
-            MessageBox.Show("Regiony zapisane!");
-        };
-
-        Canvas.SetTop(_saveButton, 10);
-        Canvas.SetRight(_saveButton, 10);
-
-        var screenWidth = SystemParameters.PrimaryScreenWidth;
-        Canvas.SetLeft(_saveButton, screenWidth - _saveButton.Width - 10);
-
-        canvas.Children.Add(_saveButton);
-    }
-
-    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        UpdateSaveButtonPosition();
-    }
-
-    private void UpdateSaveButtonPosition()
-    {
-        if (_saveButton != null)
-        {
-            Canvas.SetLeft(_saveButton, ActualWidth - _saveButton.Width - 10);
-            Canvas.SetTop(_saveButton, 10);
-        }
     }
 
     private static Color? PickColorDialog(Window? owner = null)

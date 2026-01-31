@@ -251,16 +251,6 @@
                                 Content="Start"
                                 Click="StartStopButton_Click"
                                 Style="{StaticResource PrimaryButton}"/>
-
-                                <TextBlock x:Name="DetectedIconText"
-                                   Grid.Row="2"
-                                   Text=""
-                                   Foreground="#8DE6DC"
-                                   FontSize="12"
-                                   Margin="0,54,0,0"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Top"
-                                   Visibility="Collapsed"/>
                             </Grid>
                         </Border>
 

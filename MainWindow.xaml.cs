@@ -35,10 +35,16 @@ public partial class MainWindow : Window
     private GlobalHotkeyHook? _globalHotkeyHook;
     private GlobalHotkeyHook? _regionOverlayHotkeyHook;
 
+    private bool _playedNoDetectKickoff;
     private int _reminderElapsedSeconds;
     private int _reminderPhase;
     private bool _isVillagerQueued;
     private int _queueMissingSeconds;
+
+    // --- audio state (fix for "first play doesn't play") ---
+    private Uri? _pendingAudioUri;
+    private int _openRequestId;
+    private int _pendingRequestId;
 
     public MainWindow()
     {
@@ -48,10 +54,49 @@ public partial class MainWindow : Window
         PreviewKeyDown += Window_PreviewKeyDown;
         Loaded += OnLoaded;
 
+        InitPlayer();
+
         Closed += (_, _) =>
         {
             _globalHotkeyHook?.Dispose();
             _regionOverlayHotkeyHook?.Dispose();
+
+            try
+            {
+                _soundPlayer.Stop();
+                _soundPlayer.Close();
+            }
+            catch { /* ignore */ }
+        };
+    }
+
+    private void InitPlayer()
+    {
+        _soundPlayer.MediaOpened += (_, _) =>
+        {
+            // Only play for the most recent Open() request
+            if (_pendingAudioUri == null) return;
+            if (_pendingRequestId != _openRequestId) return;
+
+            try
+            {
+                _soundPlayer.Play();
+            }
+            catch (Exception ex)
+            {
+                // don't crash app, but don't hide it either
+                DebugLine($"MediaPlayer.Play error: {ex.Message}");
+            }
+            finally
+            {
+                _pendingAudioUri = null;
+            }
+        };
+
+        _soundPlayer.MediaFailed += (_, e) =>
+        {
+            DebugLine($"MediaFailed: {e.ErrorException?.Message}");
+            _pendingAudioUri = null;
         };
     }
 
@@ -64,6 +109,28 @@ public partial class MainWindow : Window
         ApplyOverlayHotkeyState(_appSettings.OverlayHotkeyEnabled);
 
         _iconDetection.LoadTemplates(AppContext.BaseDirectory);
+
+        // optional warm-up (usually not needed after MediaOpened fix)
+        // WarmUpSound();
+    }
+
+    // If you want extra safety (rarely needed with MediaOpened)
+    private void WarmUpSound()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", "rob_wiesniaka.mp3");
+            if (!File.Exists(path)) return;
+
+            _soundPlayer.Volume = 0;
+            PlayReminderSound("rob_wiesniaka.mp3");
+            _soundPlayer.Stop();
+            _soundPlayer.Close();
+        }
+        finally
+        {
+            _soundPlayer.Volume = 1;
+        }
     }
 
     private void ApplyOverlayHotkeyState(bool enabled)
@@ -192,11 +259,9 @@ public partial class MainWindow : Window
     {
         _iconDetection.ResetSessionLock();
 
-        DetectedIconText.Visibility = Visibility.Collapsed;
-        DetectedIconText.Text = "";
-
         _isVillagerQueued = false;
         _queueMissingSeconds = 0;
+        _playedNoDetectKickoff = false;
 
         ResetSoundReminder(silent: true);
 
@@ -214,7 +279,16 @@ public partial class MainWindow : Window
     {
         _regionTimer?.Stop();
         _regionTimer = null;
-        _soundPlayer.Stop();
+
+        try
+        {
+            _soundPlayer.Stop();
+            _soundPlayer.Close();
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void OnRegionTick(object? sender, EventArgs e)
@@ -228,22 +302,37 @@ public partial class MainWindow : Window
             using var bmp = _screenCapture.CaptureRegion(region);
             var detected = _iconDetection.DetectInRegion(bmp);
 
+            // --- 1) wykryto ikonê ---
             if (detected != null)
             {
                 _isVillagerQueued = true;
                 _queueMissingSeconds = 0;
-
-                DetectedIconText.Text = $"Wykryta ikona: {detected}";
-                DetectedIconText.Visibility = Visibility.Visible;
+                _playedNoDetectKickoff = true; // ¿eby "kickoff" nie odpali³ po wykryciu
 
                 _soundPlayer.Stop();
                 ResetSoundReminder(silent: true);
                 return;
             }
 
-            DetectedIconText.Visibility = Visibility.Collapsed;
-            DetectedIconText.Text = "";
+            // 2a) Jeœli NIGDY nie by³o wykrycia i jeszcze nie by³o kickoffu:
+            // po 2 sekundach braku wykrycia zagraj rob_wiesniaka i dopiero potem licz przypominajki.
+            if (!_isVillagerQueued && !_playedNoDetectKickoff)
+            {
+                _queueMissingSeconds++;
 
+                if (_queueMissingSeconds >= QueueGoneConfirmSeconds)
+                {
+                    _playedNoDetectKickoff = true;
+                    _queueMissingSeconds = 0;
+
+                    ResetSoundReminder(silent: false); // zagra rob_wiesniaka.mp3
+                    return; // wa¿ne: nie wchodŸ w ty_rob... w tym ticku
+                }
+
+                return; // czekamy 2s
+            }
+
+            // 2b) Jeœli BY£O wykrycie i teraz znik³o:
             if (_isVillagerQueued)
             {
                 _queueMissingSeconds++;
@@ -254,10 +343,11 @@ public partial class MainWindow : Window
                 _isVillagerQueued = false;
                 _queueMissingSeconds = 0;
 
-                ResetSoundReminder(silent: false);
+                ResetSoundReminder(silent: false); // zagra rob_wiesniaka.mp3
                 return;
             }
 
+            // --- 3) normalne przypominajki, gdy nie ma kolejki i kickoff ju¿ polecia³ ---
             _reminderElapsedSeconds++;
 
             if (_reminderPhase == -1 && _reminderElapsedSeconds >= ReminderFirstSeconds)
@@ -277,20 +367,40 @@ public partial class MainWindow : Window
                 PlayReminderSound("uzyj_wieska.mp3");
             }
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"OnRegionTick error: {ex}");
         }
     }
+
 
     private void PlayReminderSound(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", fileName);
         if (!File.Exists(path))
+        {
+            DebugLine($"Sound not found: {path}");
             return;
+        }
 
-        _soundPlayer.Stop();
-        _soundPlayer.Open(new Uri(path, UriKind.Absolute));
-        _soundPlayer.Play();
+        try
+        {
+            var uri = new Uri(path, UriKind.Absolute);
+
+            _soundPlayer.Stop();
+            _soundPlayer.Close(); // wa¿ne: czyœci poprzedni stan/strumieñ
+
+            // mark a new open request
+            _openRequestId++;
+            _pendingRequestId = _openRequestId;
+
+            _pendingAudioUri = uri;
+            _soundPlayer.Open(uri); // Play poleci w MediaOpened
+        }
+        catch (Exception ex)
+        {
+            DebugLine($"PlayReminderSound error: {ex.Message}");
+        }
     }
 
     private void ResetSoundReminder(bool silent = false)
@@ -349,5 +459,16 @@ public partial class MainWindow : Window
             "Skrót klawiszowy",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
+    }
+
+    private void DebugLine(string msg)
+    {
+        // nie wymaga using System.Diagnostics;
+        // w razie czego dodaj: using System.Diagnostics;
+        try
+        {
+            System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}");
+        }
+        catch { /* ignore */ }
     }
 }
