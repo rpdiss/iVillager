@@ -10,14 +10,14 @@ public sealed class AudioService : IDisposable
 {
     private WaveOutEvent? _output;
     private AudioFileReader? _reader;
-
+    private readonly Assembly _assembly = Assembly.GetExecutingAssembly();
     private DateTime _lastPlayUtc = DateTime.MinValue;
     private string? _lastKey;
 
     private readonly Dictionary<string, string> _tempCache =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public void PlayEmbedded(string resourceName, Assembly? assembly = null)
+    public void PlayEmbedded(string resourceName)
     {
         var now = DateTime.UtcNow;
 
@@ -25,9 +25,30 @@ public sealed class AudioService : IDisposable
             (now - _lastPlayUtc).TotalMilliseconds < 400)
             return;
 
-        assembly ??= Assembly.GetExecutingAssembly();
+        // Sprawdź czy zasób istnieje
+        var resourceExists = _assembly.GetManifestResourceNames()
+            .Any(n => n.Equals(resourceName, StringComparison.OrdinalIgnoreCase));
 
-        var tempPath = EnsureTempExtract(resourceName, assembly);
+        if (!resourceExists)
+        {
+            // Możesz dodać fallback do szukania pliku
+            var fileName = Path.GetFileName(resourceName);
+            var fallbackPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "Assets",
+                "Sounds",
+                fileName);
+
+            if (File.Exists(fallbackPath))
+            {
+                Play(fallbackPath);
+                return;
+            }
+
+            throw new FileNotFoundException($"Resource not found: {resourceName}");
+        }
+
+        var tempPath = EnsureTempExtract(resourceName, _assembly);
         PlayInternal(tempPath, resourceName);
     }
 

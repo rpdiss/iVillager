@@ -18,36 +18,30 @@ public class IconDetectionService
     private string? _sessionLockedIcon;
 
     public string? SessionLockedIcon => _sessionLockedIcon;
+
     public void LoadTemplates()
     {
         _templates.Clear();
 
-        foreach (var name in IconNames)
+        if (TryLoadFromFiles(AppContext.BaseDirectory))
         {
-            try
-            {
-                using var stream = Embedded.GetStreamEndsWith($"Assets.Icons.{name}.png");
-                using var bmp = new Bitmap(stream);
-                using var mat = bmp.ToMat();
-                if (mat.IsEmpty)
-                    continue;
-
-                using var gray = ToGray(mat);
-                _templates[name] = gray.Clone();
-            }
-            catch
-            {
-
-                continue;
-            }
+            Console.WriteLine($"Loaded {_templates.Count} templates from files");
+            return;
         }
+
+        ExtractEmbeddedIcons(AppContext.BaseDirectory);
+        TryLoadFromFiles(AppContext.BaseDirectory);
+
+        Console.WriteLine($"Loaded {_templates.Count} templates (from embedded)");
     }
 
-    public void LoadTemplates(string baseDirectory)
+    private bool TryLoadFromFiles(string baseDirectory)
     {
-        _templates.Clear();
-
         var iconsFolder = Path.Combine(baseDirectory, "Assets", "Icons");
+        if (!Directory.Exists(iconsFolder))
+            return false;
+
+        bool anyLoaded = false;
 
         foreach (var name in IconNames)
         {
@@ -55,13 +49,73 @@ public class IconDetectionService
             if (!File.Exists(path))
                 continue;
 
-            using var bmp = new Bitmap(path);
-            using var mat = bmp.ToMat();
-            if (mat.IsEmpty)
-                continue;
+            try
+            {
+                using var bmp = new Bitmap(path);
+                using var mat = bmp.ToMat();
+                if (mat.IsEmpty)
+                    continue;
 
-            using var gray = ToGray(mat);
-            _templates[name] = gray.Clone();
+                using var gray = ToGray(mat);
+                _templates[name] = gray.Clone();
+                anyLoaded = true;
+            }
+            catch
+            {
+                continue;
+            }
+        }
+
+        return anyLoaded;
+    }
+
+    private void ExtractEmbeddedIcons(string baseDirectory)
+    {
+        var iconsFolder = Path.Combine(baseDirectory, "Assets", "Icons");
+        Directory.CreateDirectory(iconsFolder);
+
+        var assembly = Assembly.GetExecutingAssembly();
+        var allResources = assembly.GetManifestResourceNames();
+
+        Console.WriteLine("Available resources:");
+        foreach (var resource in allResources)
+        {
+            Console.WriteLine($"  - {resource}");
+        }
+
+        foreach (var name in IconNames)
+        {
+            // Szukaj dok³adnej nazwy zasobu
+            var resourceName = $"iVillager.Assets.Icons.{name}.png";
+            var matchingResource = allResources.FirstOrDefault(r =>
+                r.Equals(resourceName, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingResource == null)
+            {
+                Console.WriteLine($"Embedded resource not found: {resourceName}");
+                continue;
+            }
+
+            try
+            {
+                var targetPath = Path.Combine(iconsFolder, $"{name}.png");
+
+                using var stream = assembly.GetManifestResourceStream(matchingResource);
+                if (stream == null)
+                {
+                    Console.WriteLine($"Stream null for: {matchingResource}");
+                    continue;
+                }
+
+                using var fileStream = File.Create(targetPath);
+                stream.CopyTo(fileStream);
+
+                Console.WriteLine($"Extracted: {name}.png to {targetPath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to extract {name}: {ex.Message}");
+            }
         }
     }
 
@@ -80,12 +134,21 @@ public class IconDetectionService
             ? new[] { _sessionLockedIcon }
             : IconNames.Where(_templates.ContainsKey).ToArray();
 
+        Console.WriteLine($"Checking icons: {string.Join(", ", toCheck)}");
+        Console.WriteLine($"Source image: {sourceMat.Width}x{sourceMat.Height}");
+
         foreach (var name in toCheck)
         {
-            var template = _templates[name];
+            if (!_templates.TryGetValue(name, out var template))
+                continue;
+
+            Console.WriteLine($"Template {name}: {template.Width}x{template.Height}");
 
             if (sourceMat.Width < template.Width || sourceMat.Height < template.Height)
+            {
+                Console.WriteLine($"Source too small for {name}");
                 continue;
+            }
 
             using var result = new Mat();
             CvInvoke.MatchTemplate(sourceMat, template, result, TemplateMatchingType.CcoeffNormed);
@@ -94,13 +157,17 @@ public class IconDetectionService
             Point minLoc = default, maxLoc = default;
             CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
 
+            Console.WriteLine($"Match {name}: {maxVal:F3}");
+
             if (maxVal >= MatchThreshold)
             {
+                Console.WriteLine($"FOUND: {name} with confidence {maxVal:F3}");
                 _sessionLockedIcon = name;
                 return name;
             }
         }
 
+        Console.WriteLine("No icon found");
         return null;
     }
 
@@ -121,21 +188,5 @@ public class IconDetectionService
             throw new NotSupportedException($"Unsupported channel count: {src.NumberOfChannels}");
 
         return gray;
-    }
-
-    private static class Embedded
-    {
-        private static readonly Assembly Asm = Assembly.GetExecutingAssembly();
-        private static readonly string[] Names = Asm.GetManifestResourceNames();
-
-        public static Stream GetStreamEndsWith(string suffix)
-        {
-            var fullName = Names.FirstOrDefault(n => n.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
-            if (fullName is null)
-                throw new FileNotFoundException($"Embedded resource not found (ends with): {suffix}");
-
-            return Asm.GetManifestResourceStream(fullName)
-                   ?? throw new FileNotFoundException($"Embedded resource stream null: {fullName}");
-        }
     }
 }

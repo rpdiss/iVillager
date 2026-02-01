@@ -5,6 +5,7 @@ using iVillager.Services;
 using System;
 using System.IO;
 using System.Media;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -38,7 +39,6 @@ public partial class MainWindow : Window
     private GlobalHotkeyHook? _regionOverlayHotkeyHook;
 
     private bool _inAbsenceMode;
-    private bool _isVillagerQueued;
     private int _reminderElapsedSeconds;
     private int _reminderPhase;
     private int _queueMissingSeconds;
@@ -50,6 +50,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        var assembly = Assembly.GetExecutingAssembly();
+        var resources = assembly.GetManifestResourceNames();
+        foreach (var resource in resources)
+        {
+            System.Diagnostics.Debug.WriteLine($"Resource: {resource}");
+        }
+
         _appSettings = AppSettings.Load();
 
         PreviewKeyDown += Window_PreviewKeyDown;
@@ -71,7 +79,7 @@ public partial class MainWindow : Window
         OverlayHotkeyToggle.IsChecked = _appSettings.OverlayHotkeyEnabled;
         ApplyOverlayHotkeyState(_appSettings.OverlayHotkeyEnabled);
 
-        _iconDetection.LoadTemplates(AppContext.BaseDirectory);
+        _iconDetection.LoadTemplates();
     }
 
     private void ApplyOverlayHotkeyState(bool enabled)
@@ -200,7 +208,6 @@ public partial class MainWindow : Window
     {
         _iconDetection.ResetSessionLock();
 
-        _isVillagerQueued = false;
         _queueMissingSeconds = 0;
         _inAbsenceMode = false;
         ResetSoundReminder(silent: true);
@@ -241,7 +248,6 @@ public partial class MainWindow : Window
                     DebugLine("Wykryto wieœniaka - reset procesu dŸwiêkowego");
                 }
 
-                _isVillagerQueued = true;
                 _queueMissingSeconds = 0;
                 _inAbsenceMode = false;
                 _audio.Stop();
@@ -249,7 +255,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _isVillagerQueued = false;
 
             if (!_inAbsenceMode)
             {
@@ -312,16 +317,8 @@ public partial class MainWindow : Window
         {
             _audio.Stop();
 
-            var relative = Path.Combine(SoundsDirRelative, fileName);
-            var absolute = Path.Combine(AppContext.BaseDirectory, relative);
-
-            if (!File.Exists(absolute))
-            {
-                DebugLine($"Brak pliku dŸwiêkowego: {absolute}");
-                return;
-            }
-
-            _audio.Play(relative);
+            var resourceName = $"iVillager.Assets.Sounds.{fileName}";
+            _audio.PlayEmbedded(resourceName);
             DebugLine($"Odtwarzanie: {fileName}");
         }
         catch (Exception ex)
@@ -329,6 +326,7 @@ public partial class MainWindow : Window
             DebugLine($"PlayReminderSound error: {ex.Message}");
         }
     }
+
 
     private void ResetSoundReminder(bool silent = false)
     {
