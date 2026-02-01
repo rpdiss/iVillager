@@ -1,4 +1,6 @@
-﻿using System.Linq;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,7 +35,7 @@ public class RegionSelectorOverlay : Window
 
     private Button? _saveButton;
 
-    // 🔧 Kluczowa poprawka: ignoruj pierwszy Ctrl+PageUp, który otworzył overlay
+    // 🔧 Ignoruj pierwszy Ctrl+PageUp, który otworzył overlay
     private bool _ignoreFirstCtrlPageUp = true;
 
     public RegionSelectorOverlay(string groupId = "v1")
@@ -55,7 +57,6 @@ public class RegionSelectorOverlay : Window
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
 
-        // Upewnij się, że okno łapie fokus
         Activated += (_, _) =>
         {
             Focus();
@@ -104,27 +105,23 @@ public class RegionSelectorOverlay : Window
         _saveButton = new Button
         {
             Content = "Zapisz",
-            Width = 80,
-            Height = 30,
+            Width = 240,
+            Height = 72,
             FontWeight = FontWeights.Bold,
-            Background = new SolidColorBrush(Color.FromArgb(200, 0, 120, 215)),
+            FontSize = 13,
+            Background = new SolidColorBrush(Color.FromArgb(220, 0, 120, 215)),
             Foreground = Brushes.White,
             BorderBrush = Brushes.DarkSlateGray,
             BorderThickness = new Thickness(1),
             Cursor = Cursors.Hand
         };
 
-        _saveButton.Click += (_, _) =>
-        {
-            _configManager.SaveGroup(_groupId, _regions);
-            MessageBox.Show("Regiony zapisane!");
-        };
+        _saveButton.Click += (_, _) => SaveAndClose();
 
         canvas.Children.Add(_saveButton);
         UpdateSaveButtonPosition();
 
-        // 🔧 Ignorujemy Ctrl+PageUp z tego samego “wciśnięcia”,
-        // które wywołało otwarcie okna. Odblokuj dopiero po chwili.
+        // 🔧 Ignorujemy Ctrl+PageUp z tego samego “wciśnięcia” co otwarcie overlay
         Dispatcher.BeginInvoke(new Action(() =>
         {
             _ignoreFirstCtrlPageUp = false;
@@ -134,19 +131,27 @@ public class RegionSelectorOverlay : Window
         Keyboard.Focus(this);
     }
 
-    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        UpdateSaveButtonPosition();
-    }
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e) => UpdateSaveButtonPosition();
 
     private void UpdateSaveButtonPosition()
     {
-        if (_saveButton != null)
-        {
-            // Canvas nie wspiera SetRight, więc liczmy ręcznie
-            Canvas.SetLeft(_saveButton, Math.Max(0, ActualWidth - _saveButton.Width - 10));
-            Canvas.SetTop(_saveButton, 10);
-        }
+        if (_saveButton == null) return;
+
+        Canvas.SetLeft(
+            _saveButton,
+            (ActualWidth - _saveButton.Width) / 2
+        );
+
+        Canvas.SetTop(
+            _saveButton,
+            (ActualHeight - _saveButton.Height) / 2
+        );
+    }
+
+    private void SaveAndClose()
+    {
+        _configManager.SaveGroup(_groupId, _regions);
+        Close();
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
@@ -290,10 +295,10 @@ public class RegionSelectorOverlay : Window
             return;
         }
 
+        // S: zapis + zamknij (tak samo jak kliknięcie)
         if (e.Key == Key.S)
         {
-            _configManager.SaveGroup(_groupId, _regions);
-            MessageBox.Show("Regiony zapisane!");
+            SaveAndClose();
             e.Handled = true;
             return;
         }
@@ -305,7 +310,7 @@ public class RegionSelectorOverlay : Window
             return;
         }
 
-        // Ctrl+PageUp: save + close (ALE nie ten pierwszy, który otworzył overlay)
+        // Ctrl+PageUp: zapis + zamknij (ale nie ten pierwszy od otwarcia)
         if (e.Key == Key.PageUp && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
             if (_ignoreFirstCtrlPageUp)
@@ -314,8 +319,7 @@ public class RegionSelectorOverlay : Window
                 return;
             }
 
-            _configManager.SaveGroup(_groupId, _regions);
-            Close();
+            SaveAndClose();
             e.Handled = true;
             return;
         }
