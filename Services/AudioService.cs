@@ -28,13 +28,16 @@ public sealed class AudioService : IDisposable
         assembly ??= Assembly.GetExecutingAssembly();
 
         var tempPath = EnsureTempExtract(resourceName, assembly);
-
         PlayInternal(tempPath, resourceName);
     }
 
-    public void Play(string relativePath)
+    public void Play(string pathOrRelative)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, relativePath);
+        // >>> ważne: obsłuż absolutne ścieżki poprawnie
+        var path = Path.IsPathRooted(pathOrRelative)
+            ? pathOrRelative
+            : Path.Combine(AppContext.BaseDirectory, pathOrRelative);
+
         if (!File.Exists(path))
             return;
 
@@ -50,29 +53,64 @@ public sealed class AudioService : IDisposable
     {
         try
         {
-            _output?.Stop();
-            _output?.Dispose();
-            _reader?.Dispose();
+            _output?.Stop(); // PlaybackStopped zrobi resztę sprzątania
         }
-        catch { }
+        catch { /* ignore */ }
 
-        _output = null;
-        _reader = null;
+        CleanupReaderOnly();
+        _lastKey = null;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        try
+        {
+            if (_output != null)
+            {
+                _output.PlaybackStopped -= Output_PlaybackStopped;
+                _output.Stop();
+                _output.Dispose();
+                _output = null;
+            }
+        }
+        catch { /* ignore */ }
+
+        CleanupReaderOnly();
+    }
 
     private void PlayInternal(string path, string key)
     {
-        Stop();
+        EnsureOutput();
+
+        // reader podmieniamy za każdym razem
+        CleanupReaderOnly();
 
         _reader = new AudioFileReader(path);
-        _output = new WaveOutEvent();
-        _output.Init(_reader);
+        _output!.Init(_reader);
         _output.Play();
 
         _lastPlayUtc = DateTime.UtcNow;
         _lastKey = key;
+    }
+
+    private void EnsureOutput()
+    {
+        if (_output != null)
+            return;
+
+        _output = new WaveOutEvent{};
+        _output.PlaybackStopped += Output_PlaybackStopped;
+    }
+
+    private void Output_PlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        CleanupReaderOnly();
+    }
+
+    private void CleanupReaderOnly()
+    {
+        try { _reader?.Dispose(); } catch { /* ignore */ }
+        _reader = null;
     }
 
     private string EnsureTempExtract(string resourceName, Assembly asm)

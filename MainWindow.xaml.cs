@@ -1,11 +1,14 @@
+using iVillager.Capture;
+using iVillager.Models;
+using iVillager.Overlay;
+using iVillager.Services;
+using System;
 using System.IO;
+using System.Media;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using iVillager.Capture;
-using iVillager.Models;
-using iVillager.Overlay;
 using Color = System.Windows.Media.Color;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
@@ -14,10 +17,9 @@ namespace iVillager;
 public partial class MainWindow : Window
 {
     private const string GroupId = "v1";
-    private const string RegionName = "villager_in_que";
-    private const int QueueGoneConfirmSeconds = 2;
-    private const int ReminderFirstSeconds = 15;
-    private const int ReminderSecondSeconds = 30;
+    private const string RegionName = "global_build_que";
+
+    private const string SoundsDirRelative = "Assets\\Sounds";
 
     private bool _isRegionMonitoringRunning;
     private DispatcherTimer? _regionTimer;
@@ -25,7 +27,7 @@ public partial class MainWindow : Window
     private readonly RegionConfigManager _configManager = new("region_config.json");
     private readonly ScreenCaptureService _screenCapture = new();
     private readonly IconDetectionService _iconDetection = new();
-    private readonly MediaPlayer _soundPlayer = new();
+    private readonly AudioService _audio = new();
 
     private AppSettings _appSettings;
     private NamedRegion? _cachedRegion;
@@ -35,16 +37,15 @@ public partial class MainWindow : Window
     private GlobalHotkeyHook? _globalHotkeyHook;
     private GlobalHotkeyHook? _regionOverlayHotkeyHook;
 
-    private bool _playedNoDetectKickoff;
+    private bool _inAbsenceMode;
+    private bool _isVillagerQueued;
     private int _reminderElapsedSeconds;
     private int _reminderPhase;
-    private bool _isVillagerQueued;
     private int _queueMissingSeconds;
-
-    // --- audio state (fix for "first play doesn't play") ---
-    private Uri? _pendingAudioUri;
-    private int _openRequestId;
-    private int _pendingRequestId;
+    private const int SoundCheckIntervalSeconds = 2;
+    private const int FirstReminderSeconds = 15;
+    private const int SecondReminderSeconds = 30;
+    private const int RepeatReminderSeconds = 15;
 
     public MainWindow()
     {
@@ -54,49 +55,11 @@ public partial class MainWindow : Window
         PreviewKeyDown += Window_PreviewKeyDown;
         Loaded += OnLoaded;
 
-        InitPlayer();
-
         Closed += (_, _) =>
         {
             _globalHotkeyHook?.Dispose();
             _regionOverlayHotkeyHook?.Dispose();
-
-            try
-            {
-                _soundPlayer.Stop();
-                _soundPlayer.Close();
-            }
-            catch { /* ignore */ }
-        };
-    }
-
-    private void InitPlayer()
-    {
-        _soundPlayer.MediaOpened += (_, _) =>
-        {
-            // Only play for the most recent Open() request
-            if (_pendingAudioUri == null) return;
-            if (_pendingRequestId != _openRequestId) return;
-
-            try
-            {
-                _soundPlayer.Play();
-            }
-            catch (Exception ex)
-            {
-                // don't crash app, but don't hide it either
-                DebugLine($"MediaPlayer.Play error: {ex.Message}");
-            }
-            finally
-            {
-                _pendingAudioUri = null;
-            }
-        };
-
-        _soundPlayer.MediaFailed += (_, e) =>
-        {
-            DebugLine($"MediaFailed: {e.ErrorException?.Message}");
-            _pendingAudioUri = null;
+            _audio.Dispose();
         };
     }
 
@@ -109,28 +72,6 @@ public partial class MainWindow : Window
         ApplyOverlayHotkeyState(_appSettings.OverlayHotkeyEnabled);
 
         _iconDetection.LoadTemplates(AppContext.BaseDirectory);
-
-        // optional warm-up (usually not needed after MediaOpened fix)
-        // WarmUpSound();
-    }
-
-    // If you want extra safety (rarely needed with MediaOpened)
-    private void WarmUpSound()
-    {
-        try
-        {
-            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", "rob_wiesniaka.mp3");
-            if (!File.Exists(path)) return;
-
-            _soundPlayer.Volume = 0;
-            PlayReminderSound("rob_wiesniaka.mp3");
-            _soundPlayer.Stop();
-            _soundPlayer.Close();
-        }
-        finally
-        {
-            _soundPlayer.Volume = 1;
-        }
     }
 
     private void ApplyOverlayHotkeyState(bool enabled)
@@ -261,13 +202,13 @@ public partial class MainWindow : Window
 
         _isVillagerQueued = false;
         _queueMissingSeconds = 0;
-        _playedNoDetectKickoff = false;
-
+        _inAbsenceMode = false;
         ResetSoundReminder(silent: true);
 
+        _regionTimer?.Stop();
         _regionTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(1)
+            Interval = TimeSpan.FromSeconds(SoundCheckIntervalSeconds)
         };
         _regionTimer.Tick += OnRegionTick;
         _regionTimer.Start();
@@ -280,122 +221,108 @@ public partial class MainWindow : Window
         _regionTimer?.Stop();
         _regionTimer = null;
 
-        try
-        {
-            _soundPlayer.Stop();
-            _soundPlayer.Close();
-        }
-        catch
-        {
-            // ignore
-        }
+        try { _audio.Stop(); } catch { /* ignore */ }
     }
 
     private void OnRegionTick(object? sender, EventArgs e)
     {
         var region = GetVillagerInQueRegion();
-        if (region == null)
-            return;
+        if (region == null) return;
 
         try
         {
             using var bmp = _screenCapture.CaptureRegion(region);
-            var detected = _iconDetection.DetectInRegion(bmp);
+            var hasIcon = _iconDetection.DetectInRegion(bmp) != null;
 
-            // --- 1) wykryto ikonê ---
-            if (detected != null)
+            if (hasIcon)
             {
+                if (_inAbsenceMode)
+                {
+                    DebugLine("Wykryto wieœniaka - reset procesu dŸwiêkowego");
+                }
+
                 _isVillagerQueued = true;
                 _queueMissingSeconds = 0;
-                _playedNoDetectKickoff = true; // ¿eby "kickoff" nie odpali³ po wykryciu
-
-                _soundPlayer.Stop();
+                _inAbsenceMode = false;
+                _audio.Stop();
                 ResetSoundReminder(silent: true);
                 return;
             }
 
-            // 2a) Jeœli NIGDY nie by³o wykrycia i jeszcze nie by³o kickoffu:
-            // po 2 sekundach braku wykrycia zagraj rob_wiesniaka i dopiero potem licz przypominajki.
-            if (!_isVillagerQueued && !_playedNoDetectKickoff)
-            {
-                _queueMissingSeconds++;
+            _isVillagerQueued = false;
 
-                if (_queueMissingSeconds >= QueueGoneConfirmSeconds)
+            if (!_inAbsenceMode)
+            {
+                _queueMissingSeconds += SoundCheckIntervalSeconds;
+
+                if (_queueMissingSeconds >= SoundCheckIntervalSeconds)
                 {
-                    _playedNoDetectKickoff = true;
+                    DebugLine("Potwierdzono brak wieœniaka - rozpoczêcie cyklu dŸwiêkowego");
+                    _inAbsenceMode = true;
                     _queueMissingSeconds = 0;
-
-                    ResetSoundReminder(silent: false); // zagra rob_wiesniaka.mp3
-                    return; // wa¿ne: nie wchodŸ w ty_rob... w tym ticku
+                    ResetSoundReminder(silent: false);
                 }
-
-                return; // czekamy 2s
-            }
-
-            // 2b) Jeœli BY£O wykrycie i teraz znik³o:
-            if (_isVillagerQueued)
-            {
-                _queueMissingSeconds++;
-
-                if (_queueMissingSeconds < QueueGoneConfirmSeconds)
-                    return;
-
-                _isVillagerQueued = false;
-                _queueMissingSeconds = 0;
-
-                ResetSoundReminder(silent: false); // zagra rob_wiesniaka.mp3
                 return;
             }
 
-            // --- 3) normalne przypominajki, gdy nie ma kolejki i kickoff ju¿ polecia³ ---
-            _reminderElapsedSeconds++;
+            _reminderElapsedSeconds += SoundCheckIntervalSeconds;
 
-            if (_reminderPhase == -1 && _reminderElapsedSeconds >= ReminderFirstSeconds)
+            if (_reminderElapsedSeconds % SoundCheckIntervalSeconds == 0)
             {
-                PlayReminderSound("ty_rob_wiesniaka.mp3");
-                _reminderPhase = 0;
+                DebugLine($"Tryb braku: {_reminderElapsedSeconds}s, faza: {_reminderPhase}");
             }
-            else if (_reminderPhase == 0 && _reminderElapsedSeconds >= ReminderSecondSeconds)
+
+            switch (_reminderPhase)
             {
-                PlayReminderSound("uzyj_wieska.mp3");
-                _reminderPhase = 1;
-            }
-            else if (_reminderPhase == 1
-                     && _reminderElapsedSeconds > ReminderSecondSeconds
-                     && (_reminderElapsedSeconds - ReminderSecondSeconds) % ReminderFirstSeconds == 0)
-            {
-                PlayReminderSound("uzyj_wieska.mp3");
+                case -1:
+                    if (_reminderElapsedSeconds >= FirstReminderSeconds)
+                    {
+                        PlayReminderSound("ty_rob_wiesniaka.mp3");
+                        _reminderPhase = 0;
+                    }
+                    break;
+
+                case 0:
+                    if (_reminderElapsedSeconds >= SecondReminderSeconds)
+                    {
+                        PlayReminderSound("uzyj_wieska.mp3");
+                        _reminderPhase = 1;
+                    }
+                    break;
+
+                case 1:
+                    if (_reminderElapsedSeconds > SecondReminderSeconds &&
+                        (_reminderElapsedSeconds - SecondReminderSeconds) % RepeatReminderSeconds == 0)
+                    {
+                        PlayReminderSound("uzyj_wieska.mp3");
+                    }
+                    break;
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"OnRegionTick error: {ex}");
+            DebugLine($"OnRegionTick error: {ex}");
         }
     }
 
 
     private void PlayReminderSound(string fileName)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", fileName);
-        if (!File.Exists(path))
-        {
-            DebugLine($"Sound not found: {path}");
-            return;
-        }
-
         try
         {
-            var uri = new Uri(path, UriKind.Absolute);
+            _audio.Stop();
 
-            _soundPlayer.Stop();
-            _soundPlayer.Close(); // wa¿ne: czyœci poprzedni stan/strumieñ
+            var relative = Path.Combine(SoundsDirRelative, fileName);
+            var absolute = Path.Combine(AppContext.BaseDirectory, relative);
 
-            // mark a new open request
-            _openRequestId++;
-            _pendingRequestId = _openRequestId;
+            if (!File.Exists(absolute))
+            {
+                DebugLine($"Brak pliku dŸwiêkowego: {absolute}");
+                return;
+            }
 
-            _pendingAudioUri = uri;
-            _soundPlayer.Open(uri); // Play poleci w MediaOpened
+            _audio.Play(relative);
+            DebugLine($"Odtwarzanie: {fileName}");
         }
         catch (Exception ex)
         {
@@ -407,9 +334,11 @@ public partial class MainWindow : Window
     {
         _reminderElapsedSeconds = 0;
         _reminderPhase = -1;
-
         if (!silent)
+        {
             PlayReminderSound("rob_wiesniaka.mp3");
+            DebugLine("Rozpoczynanie cyklu dŸwiêkowego: rob_wiesniaka.mp3");
+        }
     }
 
     private NamedRegion? GetVillagerInQueRegion()
@@ -463,8 +392,6 @@ public partial class MainWindow : Window
 
     private void DebugLine(string msg)
     {
-        // nie wymaga using System.Diagnostics;
-        // w razie czego dodaj: using System.Diagnostics;
         try
         {
             System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}");

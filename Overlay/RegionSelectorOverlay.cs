@@ -28,14 +28,16 @@ public class RegionSelectorOverlay : Window
     private bool _isResizing = false;
     private const double HANDLE_SIZE = 10.0;
 
+    private const string RegionKey = "global_build_que";
+
+    private const string RegionLabel = "Globalna Kolejka Budowy / Global Build Queue";
+
     private readonly List<NamedRegion> _regions = new();
 
-    // JSON zamiast YAML
     private readonly RegionConfigManager _configManager = new("region_config.json");
 
     private Button? _saveButton;
 
-    // 🔧 Ignoruj pierwszy Ctrl+PageUp, który otworzył overlay
     private bool _ignoreFirstCtrlPageUp = true;
 
     public RegionSelectorOverlay(string groupId = "v1")
@@ -75,6 +77,12 @@ public class RegionSelectorOverlay : Window
         var loaded = _configManager.LoadGroup(_groupId);
         if (loaded.Count > 0)
             _regions.AddRange(loaded);
+
+        foreach (var r in _regions)
+        {
+            if (r.Name == RegionLabel)
+                r.Name = RegionKey;
+        }
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -121,7 +129,6 @@ public class RegionSelectorOverlay : Window
         canvas.Children.Add(_saveButton);
         UpdateSaveButtonPosition();
 
-        // 🔧 Ignorujemy Ctrl+PageUp z tego samego “wciśnięcia” co otwarcie overlay
         Dispatcher.BeginInvoke(new Action(() =>
         {
             _ignoreFirstCtrlPageUp = false;
@@ -246,11 +253,9 @@ public class RegionSelectorOverlay : Window
 
             if (rect.Width > 5 && rect.Height > 5)
             {
-                const string regionName = "Globalna Kolejka Budowy / Global Build Queue";
-
-                if (_regions.Any(r => r.Name == regionName))
+                if (_regions.Any(r => r.Name == RegionKey))
                 {
-                    MessageBox.Show("Region \"Globalna Kolejka Budowy\" już istnieje. Usuń go (Delete), aby dodać nowy.");
+                    MessageBox.Show($"Region \"{RegionLabel}\" już istnieje. Usuń go (Delete), aby dodać nowy.");
                 }
                 else
                 {
@@ -258,7 +263,7 @@ public class RegionSelectorOverlay : Window
 
                     _regions.Add(new NamedRegion
                     {
-                        Name = regionName,
+                        Name = RegionKey,
                         Value = new RegionEntry
                         {
                             Bounds = new RegionBounds
@@ -295,7 +300,6 @@ public class RegionSelectorOverlay : Window
             return;
         }
 
-        // S: zapis + zamknij (tak samo jak kliknięcie)
         if (e.Key == Key.S)
         {
             SaveAndClose();
@@ -310,7 +314,6 @@ public class RegionSelectorOverlay : Window
             return;
         }
 
-        // Ctrl+PageUp: zapis + zamknij (ale nie ten pierwszy od otwarcia)
         if (e.Key == Key.PageUp && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
             if (_ignoreFirstCtrlPageUp)
@@ -328,7 +331,30 @@ public class RegionSelectorOverlay : Window
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
-        RegionOverlayRenderer.RenderRegions(dc, _regions, _previewRect, _previewName, _previewColor, _selectedRegion);
+
+        var renderRegions = _regions.Select(r =>
+        {
+            if (r.Name == RegionKey)
+            {
+                return new NamedRegion
+                {
+                    Name = RegionLabel,
+                    Value = r.Value
+                };
+            }
+
+            return r;
+        }).ToList();
+
+        NamedRegion? renderSelected = null;
+        if (_selectedRegion != null)
+        {
+            renderSelected = _selectedRegion.Name == RegionKey
+                ? new NamedRegion { Name = RegionLabel, Value = _selectedRegion.Value }
+                : _selectedRegion;
+        }
+
+        RegionOverlayRenderer.RenderRegions(dc, renderRegions, _previewRect, _previewName, _previewColor, renderSelected);
     }
 
     private static Color? PickColorDialog(Window? owner = null)

@@ -3,15 +3,24 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Assets\Icons\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\Sounds\*" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Assets\Icons\**\*.*" />
+    <EmbeddedResource Include="Assets\Sounds\**\*.*" />
   </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Emgu.CV" Version="4.12.0.5764" />
     <PackageReference Include="Emgu.CV.Bitmap" Version="4.12.0.5764" />
@@ -20,4 +29,5 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
+
 </Project>

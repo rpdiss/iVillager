@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 
@@ -11,19 +12,46 @@ namespace iVillager.Capture;
 public class IconDetectionService
 {
     private const double MatchThreshold = 0.75;
-    private const string IconsFolder = "Assets/Icons";
     private static readonly string[] IconNames = ["v1", "v2", "v3", "v4", "v5", "v6"];
 
     private readonly Dictionary<string, Mat> _templates = new();
     private string? _sessionLockedIcon;
 
     public string? SessionLockedIcon => _sessionLockedIcon;
+    public void LoadTemplates()
+    {
+        _templates.Clear();
+
+        foreach (var name in IconNames)
+        {
+            try
+            {
+                using var stream = Embedded.GetStreamEndsWith($"Assets.Icons.{name}.png");
+                using var bmp = new Bitmap(stream);
+                using var mat = bmp.ToMat();
+                if (mat.IsEmpty)
+                    continue;
+
+                using var gray = ToGray(mat);
+                _templates[name] = gray.Clone();
+            }
+            catch
+            {
+
+                continue;
+            }
+        }
+    }
 
     public void LoadTemplates(string baseDirectory)
     {
+        _templates.Clear();
+
+        var iconsFolder = Path.Combine(baseDirectory, "Assets", "Icons");
+
         foreach (var name in IconNames)
         {
-            var path = Path.Combine(baseDirectory, IconsFolder, $"{name}.png");
+            var path = Path.Combine(iconsFolder, $"{name}.png");
             if (!File.Exists(path))
                 continue;
 
@@ -32,15 +60,11 @@ public class IconDetectionService
             if (mat.IsEmpty)
                 continue;
 
-            // Ujednolicamy do grayscale (stabilniejsze matchowanie, szczeg�lnie dla PNG z alpha)
             using var gray = ToGray(mat);
             _templates[name] = gray.Clone();
         }
     }
 
-    /// <summary>
-    /// Sprawdza region � je�li wykryje kt�r�� ikon�, zapami�tuje j� na sesj� i zwraca jej nazw�.
-    /// </summary>
     public string? DetectInRegion(Bitmap regionBitmap)
     {
         if (regionBitmap.Width < 1 || regionBitmap.Height < 1)
@@ -66,7 +90,6 @@ public class IconDetectionService
             using var result = new Mat();
             CvInvoke.MatchTemplate(sourceMat, template, result, TemplateMatchingType.CcoeffNormed);
 
-            // EmguCV w wielu wersjach wymaga REF (st�d CS1620)
             double minVal = 0.0, maxVal = 0.0;
             Point minLoc = default, maxLoc = default;
             CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
@@ -81,10 +104,7 @@ public class IconDetectionService
         return null;
     }
 
-    public void ResetSessionLock()
-    {
-        _sessionLockedIcon = null;
-    }
+    public void ResetSessionLock() => _sessionLockedIcon = null;
 
     private static Mat ToGray(Mat src)
     {
@@ -93,7 +113,6 @@ public class IconDetectionService
 
         var gray = new Mat();
 
-        // Najcz�ciej PNG daje 4 kana�y (BGRA), screeny/bitmapy cz�sto 3 (BGR)
         if (src.NumberOfChannels == 4)
             CvInvoke.CvtColor(src, gray, ColorConversion.Bgra2Gray);
         else if (src.NumberOfChannels == 3)
@@ -102,5 +121,21 @@ public class IconDetectionService
             throw new NotSupportedException($"Unsupported channel count: {src.NumberOfChannels}");
 
         return gray;
+    }
+
+    private static class Embedded
+    {
+        private static readonly Assembly Asm = Assembly.GetExecutingAssembly();
+        private static readonly string[] Names = Asm.GetManifestResourceNames();
+
+        public static Stream GetStreamEndsWith(string suffix)
+        {
+            var fullName = Names.FirstOrDefault(n => n.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+            if (fullName is null)
+                throw new FileNotFoundException($"Embedded resource not found (ends with): {suffix}");
+
+            return Asm.GetManifestResourceStream(fullName)
+                   ?? throw new FileNotFoundException($"Embedded resource stream null: {fullName}");
+        }
     }
 }
