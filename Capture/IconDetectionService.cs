@@ -13,110 +13,56 @@ public class IconDetectionService
 {
     private const double MatchThreshold = 0.75;
     private static readonly string[] IconNames = ["v1", "v2", "v3", "v4", "v5", "v6"];
+    private const string ResourcePrefix = "iVillager.Assets.Icons.";
 
     private readonly Dictionary<string, Mat> _templates = new();
     private string? _sessionLockedIcon;
+    private readonly Assembly _assembly;
 
     public string? SessionLockedIcon => _sessionLockedIcon;
+
+    public IconDetectionService()
+    {
+        _assembly = Assembly.GetExecutingAssembly();
+    }
 
     public void LoadTemplates()
     {
         _templates.Clear();
 
-        if (TryLoadFromFiles(AppContext.BaseDirectory))
-        {
-            Console.WriteLine($"Loaded {_templates.Count} templates from files");
-            return;
-        }
-
-        ExtractEmbeddedIcons(AppContext.BaseDirectory);
-        TryLoadFromFiles(AppContext.BaseDirectory);
-
-        Console.WriteLine($"Loaded {_templates.Count} templates (from embedded)");
-    }
-
-    private bool TryLoadFromFiles(string baseDirectory)
-    {
-        var iconsFolder = Path.Combine(baseDirectory, "Assets", "Icons");
-        if (!Directory.Exists(iconsFolder))
-            return false;
-
-        bool anyLoaded = false;
-
         foreach (var name in IconNames)
         {
-            var path = Path.Combine(iconsFolder, $"{name}.png");
-            if (!File.Exists(path))
-                continue;
-
+            var resourceName = $"{ResourcePrefix}{name}.png";
             try
             {
-                using var bmp = new Bitmap(path);
-                using var mat = bmp.ToMat();
-                if (mat.IsEmpty)
-                    continue;
-
-                using var gray = ToGray(mat);
-                _templates[name] = gray.Clone();
-                anyLoaded = true;
-            }
-            catch
-            {
-                continue;
-            }
-        }
-
-        return anyLoaded;
-    }
-
-    private void ExtractEmbeddedIcons(string baseDirectory)
-    {
-        var iconsFolder = Path.Combine(baseDirectory, "Assets", "Icons");
-        Directory.CreateDirectory(iconsFolder);
-
-        var assembly = Assembly.GetExecutingAssembly();
-        var allResources = assembly.GetManifestResourceNames();
-
-        Console.WriteLine("Available resources:");
-        foreach (var resource in allResources)
-        {
-            Console.WriteLine($"  - {resource}");
-        }
-
-        foreach (var name in IconNames)
-        {
-            // Szukaj dok³adnej nazwy zasobu
-            var resourceName = $"iVillager.Assets.Icons.{name}.png";
-            var matchingResource = allResources.FirstOrDefault(r =>
-                r.Equals(resourceName, StringComparison.OrdinalIgnoreCase));
-
-            if (matchingResource == null)
-            {
-                Console.WriteLine($"Embedded resource not found: {resourceName}");
-                continue;
-            }
-
-            try
-            {
-                var targetPath = Path.Combine(iconsFolder, $"{name}.png");
-
-                using var stream = assembly.GetManifestResourceStream(matchingResource);
+                using var stream = _assembly.GetManifestResourceStream(resourceName);
                 if (stream == null)
                 {
-                    Console.WriteLine($"Stream null for: {matchingResource}");
+                    Console.WriteLine($"Embedded resource not found: {resourceName}");
                     continue;
                 }
 
-                using var fileStream = File.Create(targetPath);
-                stream.CopyTo(fileStream);
+                using var image = Image.FromStream(stream);
+                using var bmp = new Bitmap(image);
+                using var mat = bmp.ToMat();
 
-                Console.WriteLine($"Extracted: {name}.png to {targetPath}");
+                if (mat.IsEmpty)
+                {
+                    Console.WriteLine($"Empty mat for: {name}");
+                    continue;
+                }
+
+                using var gray = ToGray(mat);
+                _templates[name] = gray.Clone();
+                Console.WriteLine($"Loaded template: {name} ({mat.Width}x{mat.Height})");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to extract {name}: {ex.Message}");
+                Console.WriteLine($"Failed to load icon {name}: {ex.Message}");
             }
         }
+
+        Console.WriteLine($"Total loaded templates: {_templates.Count}");
     }
 
     public string? DetectInRegion(Bitmap regionBitmap)
@@ -134,19 +80,26 @@ public class IconDetectionService
             ? new[] { _sessionLockedIcon }
             : IconNames.Where(_templates.ContainsKey).ToArray();
 
-        Console.WriteLine($"Checking icons: {string.Join(", ", toCheck)}");
-        Console.WriteLine($"Source image: {sourceMat.Width}x{sourceMat.Height}");
+        if (toCheck.Length == 0)
+        {
+            Console.WriteLine("No templates loaded to check against");
+            return null;
+        }
+
+        Console.WriteLine($"Checking {toCheck.Length} icons");
+        Console.WriteLine($"Source: {sourceMat.Width}x{sourceMat.Height}");
+
+        string? bestMatch = null;
+        double bestConfidence = 0;
 
         foreach (var name in toCheck)
         {
             if (!_templates.TryGetValue(name, out var template))
                 continue;
 
-            Console.WriteLine($"Template {name}: {template.Width}x{template.Height}");
-
             if (sourceMat.Width < template.Width || sourceMat.Height < template.Height)
             {
-                Console.WriteLine($"Source too small for {name}");
+                Console.WriteLine($"Source too small for {name} ({template.Width}x{template.Height})");
                 continue;
             }
 
@@ -157,17 +110,23 @@ public class IconDetectionService
             Point minLoc = default, maxLoc = default;
             CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
 
-            Console.WriteLine($"Match {name}: {maxVal:F3}");
+            Console.WriteLine($"  {name}: {maxVal:F3}");
 
-            if (maxVal >= MatchThreshold)
+            if (maxVal >= MatchThreshold && maxVal > bestConfidence)
             {
-                Console.WriteLine($"FOUND: {name} with confidence {maxVal:F3}");
-                _sessionLockedIcon = name;
-                return name;
+                bestConfidence = maxVal;
+                bestMatch = name;
             }
         }
 
-        Console.WriteLine("No icon found");
+        if (bestMatch != null)
+        {
+            Console.WriteLine($"FOUND: {bestMatch} with confidence {bestConfidence:F3}");
+            _sessionLockedIcon = bestMatch;
+            return bestMatch;
+        }
+
+        Console.WriteLine("No icon found above threshold");
         return null;
     }
 
@@ -188,5 +147,17 @@ public class IconDetectionService
             throw new NotSupportedException($"Unsupported channel count: {src.NumberOfChannels}");
 
         return gray;
+    }
+
+    // Metoda pomocnicza do debugowania zasobów
+    public void DebugResources()
+    {
+        Console.WriteLine("=== Embedded Resources ===");
+        var resources = _assembly.GetManifestResourceNames();
+        foreach (var resource in resources)
+        {
+            Console.WriteLine($"  {resource}");
+        }
+        Console.WriteLine("==========================");
     }
 }

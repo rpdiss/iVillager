@@ -1,181 +1,173 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using NAudio.Wave;
 
 namespace iVillager.Services;
 
-public sealed class AudioService : IDisposable
+public class AudioService : IDisposable
 {
-    private WaveOutEvent? _output;
-    private AudioFileReader? _reader;
-    private readonly Assembly _assembly = Assembly.GetExecutingAssembly();
-    private DateTime _lastPlayUtc = DateTime.MinValue;
-    private string? _lastKey;
-
-    private readonly Dictionary<string, string> _tempCache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private WaveOutEvent? _waveOut;
+    private Mp3FileReader? _mp3Reader;
+    private bool _isDisposed;
+    private readonly object _lock = new();
 
     public void PlayEmbedded(string resourceName)
     {
-        var now = DateTime.UtcNow;
-
-        if (_lastKey == resourceName &&
-            (now - _lastPlayUtc).TotalMilliseconds < 400)
-            return;
-
-        // Sprawdź czy zasób istnieje
-        var resourceExists = _assembly.GetManifestResourceNames()
-            .Any(n => n.Equals(resourceName, StringComparison.OrdinalIgnoreCase));
-
-        if (!resourceExists)
+        lock (_lock)
         {
-            // Możesz dodać fallback do szukania pliku
-            var fileName = Path.GetFileName(resourceName);
-            var fallbackPath = Path.Combine(
-                AppContext.BaseDirectory,
-                "Assets",
-                "Sounds",
-                fileName);
+            Stop();
 
-            if (File.Exists(fallbackPath))
+            try
             {
-                Play(fallbackPath);
-                return;
+                Console.WriteLine($"=== AudioService.PlayEmbedded: {resourceName} ===");
+
+                var assembly = Assembly.GetExecutingAssembly();
+
+                var allResources = assembly.GetManifestResourceNames();
+                Console.WriteLine("All embedded resources:");
+                foreach (var res in allResources)
+                {
+                    Console.WriteLine($"  - {res}");
+                }
+
+                Stream? stream = null;
+
+                Console.WriteLine($"Trying full resource name: {resourceName}");
+                stream = assembly.GetManifestResourceStream(resourceName);
+
+
+                if (stream == null)
+                {
+                    var fileName = Path.GetFileName(resourceName);
+                    Console.WriteLine($"Trying file name only: {fileName}");
+
+                    foreach (var res in allResources)
+                    {
+                        if (res.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Console.WriteLine($"Found match: {res}");
+                            stream = assembly.GetManifestResourceStream(res);
+                            break;
+                        }
+                    }
+                }
+
+                if (stream == null)
+                {
+                    var fileName = Path.GetFileName(resourceName);
+                    var soundPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", fileName);
+                    Console.WriteLine($"Trying file path: {soundPath}");
+
+                    if (File.Exists(soundPath))
+                    {
+                        PlayFromFile(soundPath);
+                        return;
+                    }
+                }
+
+                if (stream == null)
+                {
+                    Console.WriteLine($"ERROR: Could not find sound: {resourceName}");
+                    return;
+                }
+
+                PlayFromStream(stream);
             }
-
-            throw new FileNotFoundException($"Resource not found: {resourceName}");
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR in PlayEmbedded: {ex.Message}");
+                Cleanup();
+            }
         }
-
-        var tempPath = EnsureTempExtract(resourceName, _assembly);
-        PlayInternal(tempPath, resourceName);
     }
 
-    public void Play(string pathOrRelative)
+    private void PlayFromStream(Stream stream)
     {
-        // >>> ważne: obsłuż absolutne ścieżki poprawnie
-        var path = Path.IsPathRooted(pathOrRelative)
-            ? pathOrRelative
-            : Path.Combine(AppContext.BaseDirectory, pathOrRelative);
+        try
+        {
+            Console.WriteLine("Creating Mp3FileReader from stream...");
 
-        if (!File.Exists(path))
-            return;
+            if (stream.CanSeek)
+                stream.Position = 0;
 
-        var now = DateTime.UtcNow;
-        if (_lastKey == path &&
-            (now - _lastPlayUtc).TotalMilliseconds < 400)
-            return;
+            _mp3Reader = new Mp3FileReader(stream);
+            _waveOut = new WaveOutEvent();
+            _waveOut.Init(_mp3Reader);
 
-        PlayInternal(path, path);
+            _waveOut.PlaybackStopped += (s, e) =>
+            {
+                Console.WriteLine("Playback stopped.");
+                Cleanup();
+            };
+
+            _waveOut.Play();
+            Console.WriteLine("Playback started.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ERROR in PlayFromStream: {ex.Message}");
+            Cleanup();
+        }
+    }
+
+    private void PlayFromFile(string filePath)
+    {
+        try
+        {
+            Console.WriteLine($"Playing from file: {filePath}");
+
+            _mp3Reader = new Mp3FileReader(filePath);
+            _waveOut = new WaveOutEvent();
+            _waveOut.Init(_mp3Reader);
+
+            _waveOut.PlaybackStopped += (s, e) =>
+            {
+                Console.WriteLine("Playback stopped.");
+                Cleanup();
+            };
+
+            _waveOut.Play();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ERROR in PlayFromFile: {ex.Message}");
+            Cleanup();
+        }
     }
 
     public void Stop()
     {
+        lock (_lock)
+        {
+            Cleanup();
+        }
+    }
+
+    private void Cleanup()
+    {
         try
         {
-            _output?.Stop(); // PlaybackStopped zrobi resztę sprzątania
-        }
-        catch { /* ignore */ }
+            _waveOut?.Stop();
+            _waveOut?.Dispose();
+            _waveOut = null;
 
-        CleanupReaderOnly();
-        _lastKey = null;
+            _mp3Reader?.Dispose();
+            _mp3Reader = null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during cleanup: {ex.Message}");
+        }
     }
 
     public void Dispose()
     {
-        try
-        {
-            if (_output != null)
-            {
-                _output.PlaybackStopped -= Output_PlaybackStopped;
-                _output.Stop();
-                _output.Dispose();
-                _output = null;
-            }
-        }
-        catch { /* ignore */ }
+        if (_isDisposed) return;
 
-        CleanupReaderOnly();
-    }
+        Stop();
+        _isDisposed = true;
 
-    private void PlayInternal(string path, string key)
-    {
-        EnsureOutput();
-
-        // reader podmieniamy za każdym razem
-        CleanupReaderOnly();
-
-        _reader = new AudioFileReader(path);
-        _output!.Init(_reader);
-        _output.Play();
-
-        _lastPlayUtc = DateTime.UtcNow;
-        _lastKey = key;
-    }
-
-    private void EnsureOutput()
-    {
-        if (_output != null)
-            return;
-
-        _output = new WaveOutEvent{};
-        _output.PlaybackStopped += Output_PlaybackStopped;
-    }
-
-    private void Output_PlaybackStopped(object? sender, StoppedEventArgs e)
-    {
-        CleanupReaderOnly();
-    }
-
-    private void CleanupReaderOnly()
-    {
-        try { _reader?.Dispose(); } catch { /* ignore */ }
-        _reader = null;
-    }
-
-    private string EnsureTempExtract(string resourceName, Assembly asm)
-    {
-        if (_tempCache.TryGetValue(resourceName, out var cached) &&
-            File.Exists(cached) &&
-            new FileInfo(cached).Length > 0)
-            return cached;
-
-        using var stream = asm.GetManifestResourceStream(resourceName)
-            ?? throw new FileNotFoundException(
-                $"Embedded resource stream missing: {resourceName}");
-
-        var dir = Path.Combine(Path.GetTempPath(), "iVillager", "sounds");
-        Directory.CreateDirectory(dir);
-
-        const string marker = ".Assets.Sounds.";
-        var idx = resourceName.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-
-        var fileName = idx >= 0
-            ? resourceName[(idx + marker.Length)..]
-            : Path.GetFileName(resourceName);
-
-        var asmStamp = File.GetLastWriteTimeUtc(asm.Location)
-            .ToString("yyyyMMddHHmmss");
-
-        var tempPath = Path.Combine(dir, $"{asmStamp}_{fileName}");
-
-        if (!File.Exists(tempPath))
-        {
-            using var fs = new FileStream(
-                tempPath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.Read);
-
-            stream.CopyTo(fs);
-            fs.Flush(true);
-        }
-
-        if (new FileInfo(tempPath).Length <= 0)
-            throw new IOException($"Extracted audio is empty: {tempPath}");
-
-        _tempCache[resourceName] = tempPath;
-        return tempPath;
+        GC.SuppressFinalize(this);
     }
 }
