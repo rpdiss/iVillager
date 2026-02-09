@@ -149,7 +149,7 @@ public class IconDetectionService
         return gray;
     }
 
-    // Metoda pomocnicza do debugowania zasobów
+    // Metoda pomocnicza do debugowania zasobï¿½w
     public void DebugResources()
     {
         Console.WriteLine("=== Embedded Resources ===");
